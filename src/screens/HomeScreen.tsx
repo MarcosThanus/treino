@@ -1,14 +1,24 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../../App';
 
-const buttons = ['Perna', 'Puxadas', 'Empurradas', 'Aeróbico', 'Criar treino'];
+type Nav = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
 export function HomeScreen() {
+  const navigation = useNavigation<Nav>();
+  const buttons = ['Perna', 'Puxadas', 'Empurradas'];
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Selecione o treino</Text>
       {buttons.map((label) => (
-        <Pressable key={label} style={styles.button}>
+        <Pressable
+          key={label}
+          style={styles.button}
+          onPress={() => navigation.navigate('Session', { type: label })}
+        >
           <Text style={styles.buttonText}>{label}</Text>
         </Pressable>
       ))}
