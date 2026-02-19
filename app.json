@@ -8,10 +8,15 @@
     "assetBundlePatterns": [
       "**/*"
     ],
+    "android": {
+      "package": "com.marcosthanus.treino"
+    },
+    "splash": {
+      "backgroundColor": "#ffffff"
+    },
     "ios": {
       "supportsTablet": true
     },
-    "android": {},
     "web": {
       "bundler": "metro"
     }
