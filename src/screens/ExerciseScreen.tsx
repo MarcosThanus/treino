@@ -1,87 +1,221 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, Pressable, ScrollView } from 'react-native';
+// src/screens/ExerciseScreen.tsx
+
+import React, { useMemo, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  TextInput,
+  ScrollView,
+  Alert,
+} from 'react-native';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { RootStackParamList } from '../../App';
-import { store } from '../state/store';
+import { ensureSession, scheduleSave, uid } from '../state/store';
 
 type R = RouteProp<RootStackParamList, 'Exercise'>;
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
+function numOrUndef(s: string): number | undefined {
+  const t = s.trim();
+  if (!t) return undefined;
+  const v = Number(t.replace(',', '.'));
+  return Number.isFinite(v) ? v : undefined;
+}
+
+type LoadStatus = 'red' | 'green' | 'yellow' | 'neutral';
+
+function getLoadStatus(ex: any): LoadStatus {
+  const work = ex.sets.filter((s: any) => s.kind === 'work');
+  const repsList = work.map((s: any) => s.reps).filter((v: any) => typeof v === 'number');
+  if (repsList.length === 0) return 'neutral';
+
+  const allLow = repsList.length === work.length && repsList.every((r: number) => r <= 8);
+  if (allLow) return 'red';
+
+  const allHigh = repsList.length === work.length && repsList.every((r: number) => r >= 15);
+
+  const rirs = work.map((s: any) => s.rir).filter((v: any) => typeof v === 'number');
+  const allRirFilled = rirs.length === work.length;
+
+  if (allHigh && allRirFilled) {
+    const minRir = Math.min(...rirs);
+    if (minRir >= 2) return 'green';
+    if (minRir <= 1) return 'yellow';
+  }
+
+  return 'neutral';
+}
+
+function bannerStyles(status: LoadStatus) {
+  switch (status) {
+    case 'green':
+      return { bg: '#eefaf1', border: '#bfe8c9', text: 'Destaque: 15+ e RIR ≥ 2 (leve/controlado)' };
+    case 'yellow':
+      return { bg: '#fff9e6', border: '#f3e3b1', text: 'Destaque: 15+ com RIR baixo (perto do limite)' };
+    case 'red':
+      return { bg: '#ffecec', border: '#f2b8b8', text: 'Destaque: ≤ 8 reps em todas (muito pesado)' };
+    default:
+      return { bg: '#ffffff', border: '#e6e6e6', text: 'Sem destaque (neutro)' };
+  }
+}
+
 export function ExerciseScreen() {
   const route = useRoute<R>();
-  const nav = useNavigation<Nav>();
+  const navigation = useNavigation<Nav>();
   const { sessionType, exerciseName } = route.params;
+
+  const session = ensureSession(sessionType);
+  const exercise = session.exercises.find((e) => e.name === exerciseName);
+
   const [, force] = useState(0);
 
-  const session = store.sessions[sessionType];
-  const exercise = session?.exercises.find((e) => e.name === exerciseName);
+  const title = useMemo(() => exercise?.name ?? 'Exercício', [exercise?.name]);
+  React.useEffect(() => {
+    navigation.setOptions({ title });
+  }, [title, navigation]);
 
-  if (!session || !exercise) {
+  if (!exercise) {
     return (
       <View style={styles.container}>
         <Text style={styles.title}>Exercício não encontrado</Text>
-        <Text style={styles.sub}>Volte e abra a sessão novamente.</Text>
-        <Pressable style={styles.primaryBtn} onPress={() => nav.goBack()}>
+        <Pressable style={styles.primaryBtn} onPress={() => navigation.goBack()}>
           <Text style={styles.primaryTxt}>Voltar</Text>
         </Pressable>
       </View>
     );
   }
 
-  function updateSet(index: number, field: 'weight' | 'reps', value: string) {
-    const num = value === '' ? undefined : Number(value.replace(',', '.'));
-    (exercise.sets[index] as any)[field] = num;
+  const status = getLoadStatus(exercise);
+  const b = bannerStyles(status);
+
+  function updateSet(setId: string, patch: { weight?: number; reps?: number; rir?: number }) {
+    const s = exercise.sets.find((x) => x.id === setId);
+    if (!s) return;
+    if ('weight' in patch) s.weight = patch.weight;
+    if ('reps' in patch) s.reps = patch.reps;
+    if ('rir' in patch) s.rir = patch.rir;
+    scheduleSave();
     force((x) => x + 1);
   }
 
+  function addWorkSet() {
+    exercise.sets.push({
+      id: uid('work'),
+      kind: 'work',
+      weight: undefined,
+      reps: undefined,
+      rir: undefined,
+    });
+    scheduleSave();
+    force((x) => x + 1);
+  }
+
+  function toggleWarmup() {
+    const has = exercise.sets.some((s) => s.kind === 'warmup');
+    if (has) {
+      exercise.sets = exercise.sets.filter((s) => s.kind !== 'warmup');
+    } else {
+      exercise.sets.unshift({
+        id: uid('warm'),
+        kind: 'warmup',
+        weight: undefined,
+        reps: undefined,
+        rir: undefined,
+      });
+    }
+    scheduleSave();
+    force((x) => x + 1);
+  }
+
+  function removeSet(setId: string) {
+    // não deixa sem nenhuma série de trabalho
+    const s = exercise.sets.find((x) => x.id === setId);
+    if (!s) return;
+
+    if (s.kind === 'work') {
+      const workCount = exercise.sets.filter((x) => x.kind === 'work').length;
+      if (workCount <= 1) {
+        Alert.alert('Não dá', 'Precisa existir pelo menos 1 série de trabalho.');
+        return;
+      }
+    }
+
+    exercise.sets = exercise.sets.filter((x) => x.id !== setId);
+    scheduleSave();
+    force((x) => x + 1);
+  }
+
+  const hasWarmup = exercise.sets.some((s) => s.kind === 'warmup');
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>{exercise.name}</Text>
+      {/* Banner */}
+      <View style={[styles.banner, { backgroundColor: b.bg, borderColor: b.border }]}>
+        <Text style={styles.bannerText}>{b.text}</Text>
+      </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 120, gap: 10 }}>
-        {exercise.sets.map((s, i) => (
-          <View key={s.id ?? String(i)} style={styles.card}>
-            <Text style={styles.label}>Peso</Text>
-            <TextInput
-              value={s.weight?.toString() ?? ''}
-              onChangeText={(t) => updateSet(i, 'weight', t)}
-              keyboardType="decimal-pad"
-              placeholder="ex: 42,5"
-              style={styles.input}
-            />
+      {/* Ações */}
+      <View style={styles.actionsRow}>
+        <Pressable style={styles.secondaryBtn} onPress={toggleWarmup}>
+          <Text style={styles.secondaryTxt}>{hasWarmup ? 'Remover aquecimento' : '+ Aquecimento'}</Text>
+        </Pressable>
 
-            <Text style={styles.label}>Reps</Text>
-            <TextInput
-              value={s.reps?.toString() ?? ''}
-              onChangeText={(t) => updateSet(i, 'reps', t)}
-              keyboardType="number-pad"
-              placeholder="ex: 15"
-              style={styles.input}
-            />
+        <Pressable style={styles.secondaryBtn} onPress={addWorkSet}>
+          <Text style={styles.secondaryTxt}>+ Série (trabalho)</Text>
+        </Pressable>
+      </View>
+
+      <ScrollView contentContainerStyle={{ paddingBottom: 120, gap: 12 }}>
+        {exercise.sets.map((s, idx) => (
+          <View key={s.id} style={styles.card}>
+            <View style={styles.cardTop}>
+              <Text style={styles.cardTitle}>
+                {idx + 1}. {s.kind === 'warmup' ? 'Aquecimento' : 'Trabalho'}
+              </Text>
+
+              <Pressable style={styles.iconBtn} onPress={() => removeSet(s.id)}>
+                <Text style={styles.iconTxt}>−</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.inputs}>
+              <TextInput
+                style={styles.input}
+                placeholder="Peso"
+                keyboardType="numeric"
+                value={s.weight === undefined ? '' : String(s.weight)}
+                onChangeText={(t) => updateSet(s.id, { weight: numOrUndef(t) })}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Reps"
+                keyboardType="numeric"
+                value={s.reps === undefined ? '' : String(s.reps)}
+                onChangeText={(t) => updateSet(s.id, { reps: numOrUndef(t) })}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="RIR"
+                keyboardType="numeric"
+                value={s.rir === undefined ? '' : String(s.rir)}
+                onChangeText={(t) => updateSet(s.id, { rir: numOrUndef(t) })}
+              />
+            </View>
+
+            {s.kind === 'warmup' && (
+              <Text style={styles.hint}>Aquecimento: geralmente 15+ reps com pouco peso.</Text>
+            )}
           </View>
         ))}
       </ScrollView>
 
       <View style={styles.footer}>
-        <Pressable
-          style={styles.secondaryBtn}
-          onPress={() => {
-            nav.goBack();
-          }}
-        >
-          <Text style={styles.secondaryTxt}>Salvar</Text>
-        </Pressable>
-
-        <Pressable
-          style={styles.primaryBtn}
-          onPress={() => {
-            exercise.status = 'done';
-            nav.goBack();
-          }}
-        >
-          <Text style={styles.primaryTxt}>Completar exercício</Text>
+        <Pressable style={styles.primaryBtn} onPress={() => navigation.goBack()}>
+          <Text style={styles.primaryTxt}>Voltar</Text>
         </Pressable>
       </View>
     </View>
@@ -90,16 +224,70 @@ export function ExerciseScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f7f7f7', padding: 16, gap: 12 },
-  title: { fontSize: 22, fontWeight: '900', color: '#111' },
-  sub: { color: '#555' },
+  title: { fontSize: 20, fontWeight: '900' },
 
-  card: { backgroundColor: '#fff', padding: 14, borderRadius: 12, gap: 8, borderWidth: 1, borderColor: '#e6e6e6' },
-  label: { fontWeight: '800', color: '#333' },
-  input: { backgroundColor: '#eee', padding: 10, borderRadius: 8 },
+  banner: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+  },
+  bannerText: { fontSize: 12, color: '#111', fontWeight: '800' },
 
-  footer: { position: 'absolute', left: 16, right: 16, bottom: 16, flexDirection: 'row', gap: 10 },
-  primaryBtn: { flex: 1, backgroundColor: '#111', paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
+  actionsRow: { flexDirection: 'row', gap: 12 },
+
+  secondaryBtn: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  secondaryTxt: { color: '#111', fontWeight: '900' },
+
+  card: {
+    backgroundColor: '#fff',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e6e6e6',
+    gap: 10,
+  },
+  cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  cardTitle: { fontWeight: '900', fontSize: 14, color: '#111' },
+
+  inputs: { flexDirection: 'row', gap: 10 },
+  input: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#fff',
+  },
+  iconTxt: { fontSize: 18, fontWeight: '900', color: '#111' },
+
+  hint: { fontSize: 12, color: '#666' },
+
+  footer: { position: 'absolute', left: 16, right: 16, bottom: 16 },
+  primaryBtn: {
+    backgroundColor: '#111',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+  },
   primaryTxt: { color: '#fff', fontWeight: '900' },
-  secondaryBtn: { width: 120, backgroundColor: '#fff', paddingVertical: 14, borderRadius: 14, alignItems: 'center', borderWidth: 1, borderColor: '#ddd' },
-  secondaryTxt: { color: '#111', fontWeight: '900' }
 });

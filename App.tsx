@@ -1,52 +1,55 @@
-import 'react-native-gesture-handler';
+// App.tsx
 
-import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import * as React from 'react';
+import { View, Text } from 'react-native';
+import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { StatusBar } from 'expo-status-bar';
 
 import { HomeScreen } from './src/screens/HomeScreen';
 import { SessionScreen } from './src/screens/SessionScreen';
 import { ExerciseScreen } from './src/screens/ExerciseScreen';
+import { hydrateStore, SessionType } from './src/state/store';
 
 export type RootStackParamList = {
   Home: undefined;
-  Session: { type: string };
-  Exercise: { sessionType: string; exerciseName: string };
+  Session: { type: SessionType };
+  Exercise: { sessionType: SessionType; exerciseName: string };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
+const AppTheme = {
+  ...DefaultTheme,
+  colors: {
+    ...DefaultTheme.colors,
+    background: '#ffffff',
+  },
+};
+
 export default function App() {
+  const [ready, setReady] = React.useState(false);
+
+  React.useEffect(() => {
+    (async () => {
+      await hydrateStore();
+      setReady(true);
+    })();
+  }, []);
+
+  if (!ready) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <Text>Carregando…</Text>
+      </View>
+    );
+  }
+
   return (
-    <NavigationContainer>
-      <StatusBar style="auto" />
-      <Stack.Navigator
-        screenOptions={{
-          headerTitleStyle: { fontWeight: '900' },
-        }}
-      >
-        <Stack.Screen
-          name="Home"
-          component={HomeScreen}
-          options={{ title: 'Treino' }}
-        />
-
-        <Stack.Screen
-          name="Session"
-          component={SessionScreen}
-          options={({ route }) => ({
-            title: `Sessão de ${route.params.type}`
-          })}
-        />
-
-        <Stack.Screen
-          name="Exercise"
-          component={ExerciseScreen}
-          options={({ route }) => ({
-            title: route.params.exerciseName
-          })}
-        />
+    <NavigationContainer theme={AppTheme}>
+      <Stack.Navigator>
+        <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Treino' }} />
+        <Stack.Screen name="Session" component={SessionScreen} options={{ title: 'Sessão' }} />
+        <Stack.Screen name="Exercise" component={ExerciseScreen} options={{ title: 'Exercício' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );
