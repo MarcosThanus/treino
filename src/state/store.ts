@@ -1,5 +1,5 @@
 // src/state/store.ts
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// Opção B: store 100% em memória (sem AsyncStorage) para destravar builds em ambiente restrito.
 
 export type SessionType = 'Perna' | 'Puxadas' | 'Empurradas';
 export type SetKind = 'warmup' | 'work';
@@ -9,8 +9,8 @@ export type SetEntry = {
   kind: SetKind;
   weight?: number;
   reps?: number;
-  rir?: number;
-  timeSec?: number;
+  rir?: number; // natural
+  timeSec?: number; // usado em prancha (abdominais)
 };
 
 export type ExerciseEntry = {
@@ -37,8 +37,8 @@ export type AbExercise = {
 
 export type SessionMeta = {
   gym?: string;
-  startedAt?: number;
-  endedAt?: number;
+  startedAt?: number; // clique no tipo
+  endedAt?: number; // finalizar
   durationSec?: number;
 };
 
@@ -63,31 +63,13 @@ export type CompletedSession = {
   exercises: ExerciseEntry[];
 };
 
-export const store: {
-  sessions: Partial<Record<SessionType, SessionEntry>>;
-  lastTemplateByType: Partial<Record<SessionType, Omit<SessionEntry, 'meta'> & { meta?: never }>>;
-  history: CompletedSession[];
-  hydrated: boolean;
-} = {
-  sessions: {},
-  lastTemplateByType: {},
-  history: [],
-  hydrated: false,
-};
-
+// ===== util =====
 export function uid(prefix = 'id') {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-const STORAGE_KEY = 'treino_store_v2';
-
-type Persisted = {
-  sessions: typeof store.sessions;
-  lastTemplateByType: typeof store.lastTemplateByType;
-  history: typeof store.history;
-};
-
-function seedFromDiary(): Persisted {
+// ===== seed do TXT (Perna + Puxadas) =====
+function seedTemplates() {
   const warm = (weight: number, reps: number): SetEntry => ({
     id: uid('warm'),
     kind: 'warmup',
@@ -127,63 +109,107 @@ function seedFromDiary(): Persisted {
     mk('Abdominal Máquina', [work(27.5, 15), work(42.5, 15), work(50, 12)]),
   ];
 
-  const template = (type: SessionType, exercises: ExerciseEntry[]) => ({
-    type,
-    exercises,
-    hipMobilityDone: false,
-    showAbs: false,
-    abs: [],
-  });
-
   return {
-    sessions: {},
-    lastTemplateByType: {
-      Perna: template('Perna', pernaExercises),
-      Puxadas: template('Puxadas', puxadasExercises),
-      Empurradas: template('Empurradas', []),
+    Perna: {
+      type: 'Perna' as const,
+      exercises: pernaExercises,
+      hipMobilityDone: false,
+      showAbs: false,
+      abs: [],
     },
-    history: [],
+    Puxadas: {
+      type: 'Puxadas' as const,
+      exercises: puxadasExercises,
+      hipMobilityDone: false,
+      showAbs: false,
+      abs: [],
+    },
+    Empurradas: {
+      type: 'Empurradas' as const,
+      exercises: [],
+      hipMobilityDone: false,
+      showAbs: false,
+      abs: [],
+    },
   };
 }
 
+function cloneExercises(exs: ExerciseEntry[]): ExerciseEntry[] {
+  return exs.map((e) => ({
+    name: e.name,
+    status: 'pending',
+    sets: e.sets.map((s) => ({
+      id: uid(s.kind === 'warmup' ? 'warm' : 'work'),
+      kind: s.kind,
+      weight: s.weight,
+      reps: s.reps,
+      rir: s.rir,
+      timeSec: s.timeSec,
+    })),
+  }));
+}
+
+function cloneAbs(abs: AbExercise[]): AbExercise[] {
+  return abs.map((a) => ({
+    id: uid('ab'),
+    name: a.name,
+    mode: a.mode,
+    sets: a.sets.map((s) => ({
+      id: uid('abset'),
+      weight: s.weight,
+      reps: s.reps,
+      timeSec: s.timeSec,
+    })),
+  }));
+}
+
+// ===== store =====
+const seeded = seedTemplates();
+
+export const store: {
+  sessions: Partial<Record<SessionType, SessionEntry>>;
+  lastTemplateByType: Partial<Record<SessionType, Omit<SessionEntry, 'meta'> & { meta?: never }>>;
+  history: CompletedSession[];
+  hydrated: boolean; // mantém a mesma interface do App.tsx
+} = {
+  sessions: {},
+  lastTemplateByType: {
+    Perna: seeded.Perna,
+    Puxadas: seeded.Puxadas,
+    Empurradas: seeded.Empurradas,
+  },
+  history: [],
+  hydrated: true,
+};
+
+// no-op (para não quebrar App.tsx que chama hydrateStore)
 export async function hydrateStore() {
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      const seeded = seedFromDiary();
-      store.sessions = seeded.sessions;
-      store.lastTemplateByType = seeded.lastTemplateByType;
-      store.history = seeded.history;
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
-      return;
-    }
-
-    const parsed: Persisted = JSON.parse(raw);
-    store.sessions = parsed.sessions ?? {};
-    store.lastTemplateByType = parsed.lastTemplateByType ?? {};
-    store.history = parsed.history ?? [];
-  } catch (e) {
-    console.warn('hydrateStore failed', e);
-  } finally {
-    store.hydrated = true;
-  }
+  store.hydrated = true;
 }
 
-let saveTimer: any = null;
 export function scheduleSave() {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveStore().catch(console.warn);
-  }, 250);
+  // no-op por enquanto (sem persistência)
 }
 
-export async function saveStore() {
-  const payload: Persisted = {
-    sessions: store.sessions,
-    lastTemplateByType: store.lastTemplateByType,
-    history: store.history,
-  };
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+// ===== operações =====
+export function ensureSession(type: SessionType): SessionEntry {
+  if (!store.sessions[type]) {
+    const tpl = store.lastTemplateByType[type];
+    store.sessions[type] = {
+      type,
+      exercises: tpl ? cloneExercises(tpl.exercises) : [],
+      meta: {},
+      hipMobilityDone: tpl ? tpl.hipMobilityDone : false,
+      showAbs: tpl ? tpl.showAbs : false,
+      abs: tpl ? cloneAbs(tpl.abs) : [],
+    };
+  }
+
+  const sess = store.sessions[type]!;
+  if (!sess.meta.startedAt) {
+    sess.meta.startedAt = Date.now();
+  }
+  return sess;
 }
 
 export function addAbdominal(type: SessionType, kind?: AbExercise['name']) {
@@ -201,47 +227,44 @@ export function addAbdominal(type: SessionType, kind?: AbExercise['name']) {
     order.find((n) => !sess.abs.some((a) => a.name === n)) ??
     'Outro Abdominal';
 
-  if (next === 'Prancha') {
-    sess.abs.push({
-      id: uid('ab'),
-      name: 'Prancha',
-      mode: 'time',
-      sets: [
-        { id: uid('abset'), timeSec: undefined },
-        { id: uid('abset'), timeSec: undefined },
-        { id: uid('abset'), timeSec: undefined },
-      ],
-    });
-  }
-
-  if (next === 'Abdominal Máquina') {
-    sess.abs.push({
-      id: uid('ab'),
-      name: 'Abdominal Máquina',
-      mode: 'weight_reps',
-      sets: [
-        { id: uid('abset'), weight: undefined, reps: undefined },
-        { id: uid('abset'), weight: undefined, reps: undefined },
-        { id: uid('abset'), weight: undefined, reps: undefined },
-      ],
-    });
-  }
-
-  if (next === 'Abdominal Nadador') {
-    sess.abs.push({
-      id: uid('ab'),
-      name: 'Abdominal Nadador',
-      mode: 'reps',
-      sets: [
-        { id: uid('abset'), reps: undefined },
-        { id: uid('abset'), reps: undefined },
-        { id: uid('abset'), reps: undefined },
-      ],
-    });
-  }
-
-  if (next === 'Outro Abdominal') {
-    sess.abs.push({
+  const make = (name: AbExercise['name']): AbExercise => {
+    if (name === 'Prancha') {
+      return {
+        id: uid('ab'),
+        name,
+        mode: 'time',
+        sets: [
+          { id: uid('abset'), timeSec: undefined },
+          { id: uid('abset'), timeSec: undefined },
+          { id: uid('abset'), timeSec: undefined },
+        ],
+      };
+    }
+    if (name === 'Abdominal Máquina') {
+      return {
+        id: uid('ab'),
+        name,
+        mode: 'weight_reps',
+        sets: [
+          { id: uid('abset'), weight: undefined, reps: undefined },
+          { id: uid('abset'), weight: undefined, reps: undefined },
+          { id: uid('abset'), weight: undefined, reps: undefined },
+        ],
+      };
+    }
+    if (name === 'Abdominal Nadador') {
+      return {
+        id: uid('ab'),
+        name,
+        mode: 'reps',
+        sets: [
+          { id: uid('abset'), reps: undefined },
+          { id: uid('abset'), reps: undefined },
+          { id: uid('abset'), reps: undefined },
+        ],
+      };
+    }
+    return {
       id: uid('ab'),
       name: 'Outro Abdominal',
       mode: 'reps',
@@ -250,30 +273,9 @@ export function addAbdominal(type: SessionType, kind?: AbExercise['name']) {
         { id: uid('abset'), reps: undefined },
         { id: uid('abset'), reps: undefined },
       ],
-    });
-  }
+    };
+  };
 
   sess.showAbs = true;
-  scheduleSave();
-}
-
-export function ensureSession(type: SessionType): SessionEntry {
-  if (!store.sessions[type]) {
-    const tpl = store.lastTemplateByType[type];
-    store.sessions[type] = {
-      type,
-      exercises: tpl ? tpl.exercises : [],
-      meta: {},
-      hipMobilityDone: false,
-      showAbs: false,
-      abs: [],
-    };
-  }
-
-  const sess = store.sessions[type]!;
-  if (!sess.meta.startedAt) {
-    sess.meta.startedAt = Date.now();
-    scheduleSave();
-  }
-  return sess;
+  sess.abs.push(make(next));
 }
