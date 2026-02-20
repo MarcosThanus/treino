@@ -4,18 +4,19 @@
     "slug": "treino",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
+    "scheme": "treino",
     "assetBundlePatterns": ["**/*"],
-    "platforms": ["android"],
     "android": {
       "package": "com.marcosthanus.treino",
-      "versionCode": 1
-    }
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "plugins": []
   }
 }
