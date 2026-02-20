@@ -1,14 +1,14 @@
 {
+  "cli": {
+    "version": ">= 18.0.0"
+  },
   "build": {
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
       },
-      "env": {},
-      "npm": {
-        "installCommand": "npm install --legacy-peer-deps"
-      }
+      "prebuildCommand": "npm install --legacy-peer-deps"
     }
   }
 }
