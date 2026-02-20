@@ -4,26 +4,18 @@
     "slug": "treino",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": [
-      "**/*"
-    ],
-    "android": {
-      "package": "com.marcosthanus.treino"
-    },
     "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "ios": {
-      "supportsTablet": true
-    },
-    "web": {
-      "bundler": "metro"
-    },
-    "extra": {
-      "eas": {
-        "projectId": "c6f21dff-6d49-49a6-a38b-65f64daabaa9"
-      }
+    "assetBundlePatterns": ["**/*"],
+    "platforms": ["android"],
+    "android": {
+      "package": "com.marcosthanus.treino",
+      "versionCode": 1
     }
   }
 }
