@@ -1,13 +1,12 @@
 // App.tsx
-
 import * as React from 'react';
-import { View, Text } from 'react-native';
-import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
+import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { HomeScreen } from './src/screens/HomeScreen';
 import { SessionScreen } from './src/screens/SessionScreen';
 import { ExerciseScreen } from './src/screens/ExerciseScreen';
+
 import { hydrateStore } from './src/state/store';
 
 export type RootStackParamList = {
@@ -17,14 +16,6 @@ export type RootStackParamList = {
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
-
-const AppTheme = {
-  ...DefaultTheme,
-  colors: {
-    ...DefaultTheme.colors,
-    background: '#ffffff',
-  },
-};
 
 export default function App() {
   const [ready, setReady] = React.useState(false);
@@ -36,29 +27,21 @@ export default function App() {
     })();
   }, []);
 
-  if (!ready) {
-    return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <Text>Carregando…</Text>
-      </View>
-    );
-  }
+  if (!ready) return null;
 
   return (
-    <NavigationContainer theme={AppTheme}>
+    <NavigationContainer>
       <Stack.Navigator>
         <Stack.Screen
           name="Home"
           component={HomeScreen}
           options={{ title: 'Treino' }}
         />
-
         <Stack.Screen
           name="Session"
           component={SessionScreen}
           options={{ title: 'Sessão' }}
         />
-
         <Stack.Screen
           name="Exercise"
           component={ExerciseScreen}
