@@ -32,21 +32,9 @@ export default function App() {
   return (
     <NavigationContainer>
       <Stack.Navigator>
-        <Stack.Screen
-          name="Home"
-          component={HomeScreen}
-          options={{ title: 'Treino' }}
-        />
-        <Stack.Screen
-          name="Session"
-          component={SessionScreen}
-          options={{ title: 'Sessão' }}
-        />
-        <Stack.Screen
-          name="Exercise"
-          component={ExerciseScreen}
-          options={{ title: 'Exercício' }}
-        />
+        <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Treino' }} />
+        <Stack.Screen name="Session" component={SessionScreen} options={{ title: 'Sessão' }} />
+        <Stack.Screen name="Exercise" component={ExerciseScreen} options={{ title: 'Exercício' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );
