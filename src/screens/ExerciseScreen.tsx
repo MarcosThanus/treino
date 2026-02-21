@@ -1,4 +1,4 @@
-// src/screens/ExerciseScreen.tsx
+// src/screens/SessionScreen.tsx
 
 import React, { useMemo, useState } from 'react';
 import {
@@ -6,45 +6,42 @@ import {
   Text,
   StyleSheet,
   Pressable,
-  TextInput,
   ScrollView,
+  TextInput,
   Alert,
 } from 'react-native';
-import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
+import { RouteProp, useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { RootStackParamList } from '../../App';
 import {
+  store,
   ensureSession,
+  getRoutineName,
+  addExercise,
+  archiveExercise,
+  listArchivedExercises,
+  restoreArchivedExercise,
+  finalizeSession,
   scheduleSave,
-  uid,
-  markExerciseSaved,
+  type ExerciseEntry,
 } from '../state/store';
 
-type R = RouteProp<RootStackParamList, 'Exercise'>;
+type R = RouteProp<RootStackParamList, 'Session'>;
 type Nav = NativeStackNavigationProp<RootStackParamList>;
-
-function numOrUndef(s: string): number | undefined {
-  const t = s.trim();
-  if (!t) return undefined;
-  const v = Number(t.replace(',', '.'));
-  return Number.isFinite(v) ? v : undefined;
-}
 
 type LoadStatus = 'red' | 'green' | 'yellow' | 'neutral';
 
-function getLoadStatus(ex: any): LoadStatus {
-  const work = ex.sets.filter((s: any) => s.kind === 'work');
+function getLoadStatusFromExercise(ex: ExerciseEntry): LoadStatus {
+  const work = ex.sets.filter((s) => s.kind === 'work');
+  const repsList = work.map((s) => s.reps).filter((v): v is number => typeof v === 'number');
   if (work.length === 0) return 'neutral';
-
-  const repsList = work.map((s: any) => s.reps).filter((v: any) => typeof v === 'number');
   if (repsList.length !== work.length) return 'neutral';
 
-  if (repsList.every((r: number) => r <= 8)) return 'red';
+  if (repsList.every((r) => r <= 8)) return 'red';
 
-  const allHigh = repsList.every((r: number) => r >= 15);
-
-  const rirs = work.map((s: any) => s.rir).filter((v: any) => typeof v === 'number');
+  const allHigh = repsList.every((r) => r >= 15);
+  const rirs = work.map((s) => s.rir).filter((v): v is number => typeof v === 'number');
   const allRirFilled = rirs.length === work.length;
 
   if (allHigh && allRirFilled) {
@@ -52,182 +49,246 @@ function getLoadStatus(ex: any): LoadStatus {
     if (minRir >= 2) return 'green';
     return 'yellow';
   }
-
   return 'neutral';
 }
 
-function bannerStyles(status: LoadStatus) {
+function statusStyles(status: LoadStatus) {
   switch (status) {
     case 'green':
-      return { bg: '#eefaf1', border: '#bfe8c9', text: 'Destaque: 15+ e RIR ≥ 2' };
+      return { borderColor: '#bfe8c9', backgroundColor: '#eefaf1', chip: '15+ / RIR≥2' };
     case 'yellow':
-      return { bg: '#fff9e6', border: '#f3e3b1', text: 'Destaque: 15+ com RIR baixo' };
+      return { borderColor: '#f3e3b1', backgroundColor: '#fff9e6', chip: '15+ (RIR baixo)' };
     case 'red':
-      return { bg: '#ffecec', border: '#f2b8b8', text: 'Destaque: ≤ 8 reps em todas' };
+      return { borderColor: '#f2b8b8', backgroundColor: '#ffecec', chip: '≤8 (pesado)' };
     default:
-      return { bg: '#ffffff', border: '#e6e6e6', text: 'Sem destaque (neutro)' };
+      return { borderColor: '#e6e6e6', backgroundColor: '#ffffff', chip: '' };
   }
 }
 
-export function ExerciseScreen() {
+function pad2(n: number) {
+  return String(n).padStart(2, '0');
+}
+function formatDuration(sec?: number) {
+  if (!sec || sec <= 0) return '';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}:${pad2(m)}:${pad2(s)}`;
+  return `${m}:${pad2(s)}`;
+}
+
+export function SessionScreen() {
   const route = useRoute<R>();
   const navigation = useNavigation<Nav>();
-  const { routineId, exerciseId } = route.params;
+  const { routineId } = route.params;
 
   const session = ensureSession(routineId);
-  const exercise = session.exercises.find((e) => e.id === exerciseId);
+  const routineName = getRoutineName(routineId);
 
   const [, force] = useState(0);
 
-  const title = useMemo(() => exercise?.name ?? 'Exercício', [exercise?.name]);
-  React.useEffect(() => {
-    navigation.setOptions({ title });
-  }, [title, navigation]);
+  useFocusEffect(
+    React.useCallback(() => {
+      force((x) => x + 1);
+      return undefined;
+    }, [])
+  );
 
-  if (!exercise) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Exercício não encontrado</Text>
-        <Pressable style={styles.primaryBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.primaryTxt}>Voltar</Text>
-        </Pressable>
-      </View>
+  React.useEffect(() => {
+    navigation.setOptions({ title: routineName });
+  }, [routineName, navigation]);
+
+  const [gymDraft, setGymDraft] = useState(session.meta.gym ?? '');
+  const [showDone, setShowDone] = useState(false);
+
+  const [showAddPanel, setShowAddPanel] = useState(false);
+
+  const archived = listArchivedExercises(routineId);
+
+  const { pending, done } = useMemo(() => {
+    return {
+      pending: session.exercises.filter((e) => e.status !== 'done'),
+      done: session.exercises.filter((e) => e.status === 'done'),
+    };
+  }, [session.exercises]);
+
+  function saveGym() {
+    session.meta.gym = gymDraft.trim() || undefined;
+    scheduleSave();
+    force((x) => x + 1);
+  }
+
+  function addNewExercise() {
+    addExercise(routineId);
+    scheduleSave();
+    force((x) => x + 1);
+    setShowAddPanel(false);
+  }
+
+  function askRemoveExercise(exId: string, name: string) {
+    Alert.alert(
+      'Remover exercício',
+      `Remover "${name}" desta sessão?\n\nEle não será apagado. Vai ficar disponível para re-adicionar.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Remover',
+          style: 'destructive',
+          onPress: () => {
+            archiveExercise(routineId, exId);
+            scheduleSave();
+            force((x) => x + 1);
+          },
+        },
+      ]
     );
   }
 
-  const status = getLoadStatus(exercise);
-  const b = bannerStyles(status);
-
-  function updateSet(setId: string, patch: { weight?: number; reps?: number; rir?: number }) {
-    const s = exercise.sets.find((x) => x.id === setId);
-    if (!s) return;
-
-    if ('weight' in patch) s.weight = patch.weight;
-    if ('reps' in patch) s.reps = patch.reps;
-    if ('rir' in patch) s.rir = patch.rir;
-
+  function restoreOne(exId: string) {
+    const ex = restoreArchivedExercise(routineId, exId);
+    if (!ex) return;
     scheduleSave();
     force((x) => x + 1);
+    setShowAddPanel(false);
   }
 
-  function addWorkSet() {
-    exercise.sets.push({
-      id: uid('work'),
-      kind: 'work',
-      weight: undefined,
-      reps: undefined,
-      rir: undefined,
-    });
-    scheduleSave();
-    force((x) => x + 1);
-  }
+  function onFinalize() {
+    finalizeSession(routineId);
+    const dur = store.sessionsByRoutineId[routineId]?.meta.durationSec;
 
-  function toggleWarmup() {
-    const has = exercise.sets.some((s) => s.kind === 'warmup');
-    if (has) {
-      exercise.sets = exercise.sets.filter((s) => s.kind !== 'warmup');
-    } else {
-      exercise.sets.unshift({
-        id: uid('warm'),
-        kind: 'warmup',
-        weight: undefined,
-        reps: undefined,
-        rir: undefined,
-      });
-    }
-    scheduleSave();
-    force((x) => x + 1);
-  }
-
-  function removeSet(setId: string) {
-    const s = exercise.sets.find((x) => x.id === setId);
-    if (!s) return;
-
-    if (s.kind === 'work') {
-      const workCount = exercise.sets.filter((x) => x.kind === 'work').length;
-      if (workCount <= 1) {
-        Alert.alert('Não dá', 'Precisa existir pelo menos 1 série de trabalho.');
-        return;
-      }
-    }
-
-    exercise.sets = exercise.sets.filter((x) => x.id !== setId);
-    scheduleSave();
-    force((x) => x + 1);
-  }
-
-  function saveExercise() {
-    // "Salvar" = marcar como concluído hoje + manter para próxima sessão (template)
-    markExerciseSaved(routineId, exerciseId);
-    scheduleSave();
-    force((x) => x + 1);
-
-    Alert.alert('Salvo', 'Exercício marcado como salvo.');
+    Alert.alert(
+      'Sessão finalizada',
+      `Rotina: ${routineName}\nDuração: ${formatDuration(dur) || '—'}\nAcademia: ${session.meta.gym ?? '—'}`
+    );
     navigation.goBack();
   }
 
-  const hasWarmup = exercise.sets.some((s) => s.kind === 'warmup');
-
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 24 }}>
-      <View style={[styles.banner, { backgroundColor: b.bg, borderColor: b.border }]}>
-        <Text style={styles.bannerText}>{b.text}</Text>
+    <ScrollView style={styles.container} contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 24 }}>
+      <Text style={styles.title}>Sessão: {routineName}</Text>
+
+      {/* Academia */}
+      <View style={styles.section}>
+        <Text style={styles.label}>Academia (unidade/filial)</Text>
+        <View style={styles.row}>
+          <TextInput
+            style={styles.input}
+            placeholder="Ex: General Osório, Barão da Torre..."
+            value={gymDraft}
+            onChangeText={setGymDraft}
+          />
+          <Pressable style={styles.smallBtn} onPress={saveGym}>
+            <Text style={styles.smallBtnTxt}>Salvar</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.meta}>
+          Início: {session.meta.startedAt ? new Date(session.meta.startedAt).toLocaleString() : '—'}
+          {session.meta.durationSec ? ` • Duração: ${formatDuration(session.meta.durationSec)}` : ''}
+        </Text>
       </View>
 
-      <View style={styles.actionsRow}>
-        <Pressable style={styles.secondaryBtn} onPress={toggleWarmup}>
-          <Text style={styles.secondaryTxt}>{hasWarmup ? 'Remover aquecimento' : '+ Aquecimento'}</Text>
-        </Pressable>
-
-        <Pressable style={styles.secondaryBtn} onPress={addWorkSet}>
-          <Text style={styles.secondaryTxt}>+ Série (trabalho)</Text>
-        </Pressable>
-      </View>
-
-      {exercise.sets.map((s, idx) => (
-        <View key={s.id} style={styles.card}>
-          <View style={styles.cardTop}>
-            <Text style={styles.cardTitle}>
-              {idx + 1}. {s.kind === 'warmup' ? 'Aquecimento' : 'Trabalho'}
-            </Text>
-
-            <Pressable style={styles.iconBtn} onPress={() => removeSet(s.id)}>
-              <Text style={styles.iconTxt}>−</Text>
+      {/* Exercícios */}
+      <View style={styles.section}>
+        <View style={styles.rowBetween}>
+          <Text style={styles.label}>Exercícios</Text>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            {done.length > 0 && (
+              <Pressable style={styles.doneBtn} onPress={() => setShowDone((v) => !v)}>
+                <Text style={styles.doneTxt}>Concluídos ({done.length}) {showDone ? '▲' : '▼'}</Text>
+              </Pressable>
+            )}
+            <Pressable style={styles.secondaryBtnMini} onPress={() => setShowAddPanel(true)}>
+              <Text style={styles.secondaryTxt}>+ Exercício</Text>
             </Pressable>
           </View>
+        </View>
 
-          <View style={styles.inputs}>
-            <TextInput
-              style={styles.input}
-              placeholder="Peso"
-              keyboardType="numeric"
-              value={s.weight === undefined ? '' : String(s.weight)}
-              onChangeText={(t) => updateSet(s.id, { weight: numOrUndef(t) })}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Reps"
-              keyboardType="numeric"
-              value={s.reps === undefined ? '' : String(s.reps)}
-              onChangeText={(t) => updateSet(s.id, { reps: numOrUndef(t) })}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="RIR"
-              keyboardType="numeric"
-              value={s.rir === undefined ? '' : String(s.rir)}
-              onChangeText={(t) => updateSet(s.id, { rir: numOrUndef(t) })}
-            />
+        {/* Painel de adicionar */}
+        {showAddPanel && (
+          <View style={styles.addPanel}>
+            <View style={styles.addHeader}>
+              <Text style={styles.addTitle}>Adicionar exercício</Text>
+              <Pressable style={styles.xBtn} onPress={() => setShowAddPanel(false)}>
+                <Text style={styles.xTxt}>✕</Text>
+              </Pressable>
+            </View>
+
+            <Pressable style={styles.primaryBtnSmall} onPress={addNewExercise}>
+              <Text style={styles.primaryTxt}>Novo exercício</Text>
+            </Pressable>
+
+            {archived.length > 0 && (
+              <View style={{ gap: 10 }}>
+                <Text style={styles.meta}>Re-adicionar removidos</Text>
+                {archived.slice(0, 20).map((ex) => (
+                  <Pressable key={ex.id} style={styles.archItem} onPress={() => restoreOne(ex.id)}>
+                    <Text style={styles.archTitle}>{ex.name}</Text>
+                    <Text style={styles.archSub}>Toque para re-adicionar</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            <Pressable style={styles.secondaryBtn} onPress={() => setShowAddPanel(false)}>
+              <Text style={styles.secondaryTxt}>Fechar</Text>
+            </Pressable>
           </View>
+        )}
 
-          {s.kind === 'warmup' && (
-            <Text style={styles.hint}>Aquecimento: geralmente 15+ reps com pouco peso.</Text>
+        {/* Pendentes */}
+        <View style={{ gap: 12 }}>
+          {pending.length === 0 ? (
+            <Text style={styles.meta}>
+              {done.length > 0 ? 'Tudo concluído nesta sessão.' : 'Nenhum exercício. Use “+ Exercício”.'}
+            </Text>
+          ) : (
+            pending.map((ex) => {
+              const st = statusStyles(getLoadStatusFromExercise(ex));
+              return (
+                <View key={ex.id} style={[styles.card, { borderColor: st.borderColor, backgroundColor: st.backgroundColor }]}>
+                  <Pressable
+                    style={{ flex: 1 }}
+                    onPress={() => navigation.navigate('Exercise', { routineId, exerciseId: ex.id })}
+                  >
+                    <View style={styles.cardTop}>
+                      <Text style={styles.cardTitle}>{ex.name}</Text>
+                      {st.chip ? <Text style={styles.chip}>{st.chip}</Text> : null}
+                    </View>
+                    <Text style={styles.cardSub}>
+                      {ex.sets.filter((s) => s.kind === 'work').length} trabalho
+                      {ex.sets.some((s) => s.kind === 'warmup') ? ' • + aquecimento' : ''}
+                    </Text>
+                  </Pressable>
+
+                  <Pressable style={styles.removeBtn} onPress={() => askRemoveExercise(ex.id, ex.name)}>
+                    <Text style={styles.removeTxt}>Remover</Text>
+                  </Pressable>
+                </View>
+              );
+            })
           )}
         </View>
-      ))}
 
-      <Pressable style={styles.primaryBtn} onPress={saveExercise}>
-        <Text style={styles.primaryTxt}>Salvar</Text>
+        {/* Concluídos */}
+        {showDone && done.length > 0 && (
+          <View style={styles.donePanel}>
+            {done.map((ex) => (
+              <Pressable
+                key={ex.id}
+                style={styles.doneCard}
+                onPress={() => navigation.navigate('Exercise', { routineId, exerciseId: ex.id })}
+              >
+                <Text style={styles.doneCardTitle}>{ex.name}</Text>
+                <Text style={styles.doneCardSub}>SALVO • toque para editar</Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+      </View>
+
+      {/* Finalizar */}
+      <Pressable style={styles.primaryBtn} onPress={onFinalize}>
+        <Text style={styles.primaryTxt}>Finalizar sessão</Text>
       </Pressable>
     </ScrollView>
   );
@@ -235,15 +296,46 @@ export function ExerciseScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f7f7f7' },
-  title: { fontSize: 20, fontWeight: '900' },
+  title: { fontSize: 22, fontWeight: '900' },
 
-  banner: { borderWidth: 1, borderRadius: 14, padding: 12 },
-  bannerText: { fontSize: 12, color: '#111', fontWeight: '800' },
+  section: { gap: 10 },
+  label: { fontSize: 14, fontWeight: '900', color: '#111' },
+  meta: { fontSize: 12, color: '#666' },
 
-  actionsRow: { flexDirection: 'row', gap: 12 },
+  row: { flexDirection: 'row', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
+  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
 
+  input: {
+    flexGrow: 1,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minWidth: 180,
+  },
+
+  smallBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  smallBtnTxt: { fontWeight: '900', color: '#111' },
+
+  secondaryBtnMini: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+  },
   secondaryBtn: {
-    flex: 1,
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#ddd',
@@ -253,42 +345,91 @@ const styles = StyleSheet.create({
   },
   secondaryTxt: { color: '#111', fontWeight: '900' },
 
-  card: {
-    backgroundColor: '#fff',
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e6e6e6',
-    gap: 10,
-  },
-  cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  cardTitle: { fontWeight: '900', fontSize: 14, color: '#111' },
+  card: { borderRadius: 14, borderWidth: 1, padding: 14, gap: 10 },
+  cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  cardTitle: { fontWeight: '900', fontSize: 16, color: '#111', flex: 1 },
+  chip: { fontSize: 11, color: '#111', fontWeight: '900' },
+  cardSub: { marginTop: 6, color: '#666' },
 
-  inputs: { flexDirection: 'row', gap: 10 },
-  input: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 12,
+  removeBtn: {
+    alignSelf: 'flex-end',
     paddingVertical: 10,
     paddingHorizontal: 12,
-  },
-
-  iconBtn: {
-    width: 40,
-    height: 40,
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f0b3b3',
+    backgroundColor: '#fff',
+  },
+  removeTxt: { fontWeight: '900', color: '#b00020' },
+
+  doneBtn: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     alignItems: 'center',
-    justifyContent: 'center',
+  },
+  doneTxt: { color: '#111', fontWeight: '900' },
+
+  donePanel: {
+    marginTop: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e6e6e6',
+    borderRadius: 14,
+    padding: 10,
+    gap: 10,
+  },
+  doneCard: {
+    backgroundColor: '#fafafa',
+    borderWidth: 1,
+    borderColor: '#eee',
+    borderRadius: 12,
+    padding: 12,
+  },
+  doneCardTitle: { fontWeight: '900', color: '#111' },
+  doneCardSub: { marginTop: 4, fontSize: 12, color: '#666' },
+
+  addPanel: {
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: '#111',
+    borderRadius: 16,
+    padding: 12,
+    gap: 12,
+  },
+  addHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  addTitle: { fontWeight: '900', color: '#111' },
+  xBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#ddd',
     backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  iconTxt: { fontSize: 18, fontWeight: '900', color: '#111' },
+  xTxt: { fontWeight: '900', color: '#111' },
 
-  hint: { fontSize: 12, color: '#666' },
+  archItem: {
+    backgroundColor: '#fafafa',
+    borderWidth: 1,
+    borderColor: '#eee',
+    borderRadius: 14,
+    padding: 12,
+  },
+  archTitle: { fontWeight: '900', color: '#111' },
+  archSub: { marginTop: 4, fontSize: 12, color: '#666' },
 
+  primaryBtnSmall: {
+    backgroundColor: '#111',
+    paddingVertical: 12,
+    borderRadius: 14,
+    alignItems: 'center',
+  },
   primaryBtn: {
     backgroundColor: '#111',
     paddingVertical: 14,
