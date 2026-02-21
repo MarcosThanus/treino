@@ -1,289 +1,266 @@
 // src/state/store.ts
 
-export type SessionType = 'Perna' | 'Puxadas' | 'Empurradas';
 export type SetKind = 'warmup' | 'work';
-
-export type ExerciseStatus = 'pending' | 'done';
 
 export type SetEntry = {
   id: string;
   kind: SetKind;
   weight?: number;
   reps?: number;
-  rir?: number; // RIR é natural; pode ficar vazio
+  rir?: number; // natural (opcional)
 };
+
+export type ExerciseStatus = 'pending' | 'done';
 
 export type ExerciseEntry = {
   id: string;
   name: string;
-  status: ExerciseStatus; // 'done' => concluído/salvo
+  status: ExerciseStatus;
   sets: SetEntry[];
 };
 
-export type AbMode = 'time' | 'weight_reps' | 'reps';
-
-export type AbEntry = {
+export type AbsEntry = {
   id: string;
   name: string;
-  mode: AbMode;
-};
-
-export type Routine = {
-  id: string;
-  name: string;
-  isArchived: boolean;
-  createdAt: string;
+  done: boolean;
 };
 
 export type SessionMeta = {
-  startedAt?: string; // ISO
-  endedAt?: string; // ISO
+  startedAt?: string;
+  endedAt?: string;
   durationSec?: number;
   gym?: string; // unidade/filial
+  hipMobilityDone?: boolean;
 };
 
 export type Session = {
   routineId: string;
   exercises: ExerciseEntry[];
-  archivedExercises: ExerciseEntry[]; // “deletados” (para re-adicionar depois)
-  abs: AbEntry[];
-  showAbs: boolean;
-  hipMobilityDone: boolean;
+  abs: AbsEntry[];
   meta: SessionMeta;
 };
 
-export const store: {
-  routinesById: Record<string, Routine>;
-  routineOrder: string[];
-  sessionsByRoutineId: Record<string, Session>;
-} = {
-  routinesById: {},
-  routineOrder: [],
-  sessionsByRoutineId: {},
+export type Routine = {
+  id: string;
+  name: string;
+  archived?: boolean;
 };
 
-export function uid(prefix: string) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+export const store: {
+  routines: Record<string, Routine>;
+  routineOrder: string[];
+  archivedRoutineIds: string[];
+
+  sessionsByRoutineId: Record<string, Session>;
+
+  archivedExercisesByRoutineId: Record<string, ExerciseEntry[]>;
+} = {
+  routines: {},
+  routineOrder: [],
+  archivedRoutineIds: [],
+  sessionsByRoutineId: {},
+  archivedExercisesByRoutineId: {},
+};
+
+export function uid(prefix = 'id') {
+  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
 }
 
 /**
- * MVP: persistência ainda não ativa.
- * Mantemos API para depois plugar storage real.
+ * Persistência real: ainda não.
+ * Mas deixamos as funções para manter a arquitetura.
  */
+let saveTimer: any = null;
+export function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    // placeholder para persistência futura
+    // console.log('scheduleSave() - (no-op)');
+  }, 150);
+}
+
 export async function hydrateStore() {
-  // seed inicial
+  // Placeholder: no-op por enquanto.
+  // Aqui depois vamos carregar do AsyncStorage (ou outra estratégia).
   if (store.routineOrder.length === 0) {
-    const r1 = seedRoutine('Perna');
-    const r2 = seedRoutine('Puxadas');
-    const r3 = seedRoutine('Empurradas');
-    store.routineOrder.push(r1.id, r2.id, r3.id);
+    // seed inicial padrão
+    const r1 = addRoutine('Perna');
+    const r2 = addRoutine('Puxadas');
+    const r3 = addRoutine('Empurradas');
+
+    ensureSession(r1.id);
+    ensureSession(r2.id);
+    ensureSession(r3.id);
   }
 }
 
-export function scheduleSave() {
-  // no-op por enquanto
+export function listActiveRoutines(): Routine[] {
+  return store.routineOrder
+    .map((id) => store.routines[id])
+    .filter((r) => r && !r.archived);
 }
 
-function seedRoutine(name: string) {
+export function listArchivedRoutines(): Routine[] {
+  return store.archivedRoutineIds.map((id) => store.routines[id]).filter(Boolean);
+}
+
+export function addRoutine(name?: string): Routine {
   const id = uid('routine');
-  const r: Routine = {
+  const routine: Routine = {
     id,
-    name,
-    isArchived: false,
-    createdAt: new Date().toISOString(),
+    name: (name && name.trim()) || `Rotina ${store.routineOrder.length + 1}`,
+    archived: false,
   };
-  store.routinesById[id] = r;
-  return r;
-}
-
-export function listActiveRoutines() {
-  return store.routineOrder
-    .map((id) => store.routinesById[id])
-    .filter((r) => r && !r.isArchived);
-}
-
-export function listArchivedRoutines() {
-  return store.routineOrder
-    .map((id) => store.routinesById[id])
-    .filter((r) => r && r.isArchived);
-}
-
-export function addRoutine(nameDraft: string) {
-  const name = nameDraft.trim() || 'Nova rotina';
-  const r = seedRoutine(name);
-  store.routineOrder.unshift(r.id);
-  return r;
+  store.routines[id] = routine;
+  store.routineOrder.push(id);
+  // cria sessão on-demand
+  return routine;
 }
 
 export function archiveRoutine(routineId: string) {
-  const r = store.routinesById[routineId];
+  const r = store.routines[routineId];
   if (!r) return;
-  r.isArchived = true;
+  r.archived = true;
+  if (!store.archivedRoutineIds.includes(routineId)) {
+    store.archivedRoutineIds.push(routineId);
+  }
 }
 
 export function unarchiveRoutine(routineId: string) {
-  const r = store.routinesById[routineId];
+  const r = store.routines[routineId];
   if (!r) return;
-  r.isArchived = false;
+  r.archived = false;
+  store.archivedRoutineIds = store.archivedRoutineIds.filter((id) => id !== routineId);
 }
 
 export function getRoutineName(routineId: string) {
-  return store.routinesById[routineId]?.name ?? 'Rotina';
+  return store.routines[routineId]?.name ?? 'Rotina';
 }
 
-function presetExercisesForRoutineName(name: string): string[] {
-  // compat: nomes clássicos
-  const presets: Record<string, string[]> = {
-    Perna: ['Leg Press', 'Mesa Flexora', 'Panturrilha Máquina'],
-    Puxadas: ['Puxada na Barra', 'Remada Máquina'],
-    Empurradas: [],
-  };
-  return presets[name] ?? [];
+function defaultAbs(): AbsEntry[] {
+  return [
+    { id: uid('abs'), name: 'Prancha', done: false },
+    { id: uid('abs'), name: 'Abdominal nadador', done: false },
+    { id: uid('abs'), name: 'Abdominal máquina', done: false },
+  ];
 }
 
-function defaultWorkSets(count: number) {
-  const sets: SetEntry[] = [];
-  for (let i = 0; i < count; i++) {
-    sets.push({
-      id: uid('work'),
-      kind: 'work',
-      weight: undefined,
-      reps: undefined,
-      rir: undefined,
-    });
+function defaultExercisesForRoutineName(name: string): string[] {
+  // Empurradas deve começar vazio (como você pediu anteriormente)
+  if (name.toLowerCase() === 'empurradas') return [];
+
+  if (name.toLowerCase() === 'perna') {
+    return ['Leg Press', 'Mesa Flexora', 'Panturrilha Máquina'];
   }
-  return sets;
+  if (name.toLowerCase() === 'puxadas') {
+    return ['Puxada na Barra', 'Remada Máquina'];
+  }
+  // rotinas novas começam vazias
+  return [];
 }
 
-function defaultWarmupSet(): SetEntry {
-  return {
-    id: uid('warm'),
-    kind: 'warmup',
-    weight: undefined,
-    reps: undefined,
-    rir: undefined,
-  };
-}
-
-function makeExercise(name: string): ExerciseEntry {
-  // padrão: sem aquecimento obrigatório (você alterna no Exercise)
-  // aqui colocamos 3 de trabalho por padrão (como você usava)
-  return {
-    id: uid('ex'),
-    name,
-    status: 'pending',
-    sets: [...defaultWorkSets(3)],
-  };
-}
-
-export function ensureSession(routineId: string) {
+export function ensureSession(routineId: string): Session {
   if (!store.sessionsByRoutineId[routineId]) {
     const routineName = getRoutineName(routineId);
 
-    const presetNames = presetExercisesForRoutineName(routineName);
-    const exercises = presetNames.map((n) => {
-      // seus presets antigos vinham com 1 warm + 3 work.
-      // como você quer warm opcional, mas “se fez na última aparece”:
-      // mantemos warm nos presets iniciais apenas para Perna/Puxadas (histórico).
-      const ex = makeExercise(n);
-      if (routineName === 'Perna' || routineName === 'Puxadas') {
-        ex.sets = [defaultWarmupSet(), ...defaultWorkSets(3)];
-      }
-      return ex;
-    });
+    const exercises: ExerciseEntry[] = defaultExercisesForRoutineName(routineName).map((name) => ({
+      id: uid('ex'),
+      name,
+      status: 'pending',
+      sets: [
+        // aquecimento opcional (começa com 1 por padrão; você pode remover no ExerciseScreen)
+        { id: uid('warm'), kind: 'warmup', weight: undefined, reps: undefined, rir: undefined },
+        { id: uid('work'), kind: 'work', weight: undefined, reps: undefined, rir: undefined },
+        { id: uid('work'), kind: 'work', weight: undefined, reps: undefined, rir: undefined },
+        { id: uid('work'), kind: 'work', weight: undefined, reps: undefined, rir: undefined },
+      ],
+    }));
 
     store.sessionsByRoutineId[routineId] = {
       routineId,
       exercises,
-      archivedExercises: [],
-      abs: [],
-      showAbs: false,
-      hipMobilityDone: false,
+      abs: defaultAbs(),
       meta: {
-        startedAt: new Date().toISOString(),
+        hipMobilityDone: false,
       },
     };
-  } else {
-    const s = store.sessionsByRoutineId[routineId];
-    // marca início se ainda não tiver
-    if (!s.meta.startedAt) s.meta.startedAt = new Date().toISOString();
   }
 
-  return store.sessionsByRoutineId[routineId];
+  // garante start time ao abrir pela primeira vez
+  const s = store.sessionsByRoutineId[routineId];
+  if (!s.meta.startedAt) {
+    s.meta.startedAt = new Date().toISOString();
+  }
+  return s;
 }
 
-/** Exercícios: novo (em branco) */
-export function addExercise(routineId: string) {
+export function addExercise(routineId: string): ExerciseEntry {
   const s = ensureSession(routineId);
-  const ex = makeExercise(`Exercício ${s.exercises.length + 1}`);
-  s.exercises.push(ex);
-  return ex;
+  const newEx: ExerciseEntry = {
+    id: uid('ex'),
+    name: `Exercício ${s.exercises.length + 1}`,
+    status: 'pending',
+    sets: [
+      { id: uid('warm'), kind: 'warmup', weight: undefined, reps: undefined, rir: undefined },
+      { id: uid('work'), kind: 'work', weight: undefined, reps: undefined, rir: undefined },
+      { id: uid('work'), kind: 'work', weight: undefined, reps: undefined, rir: undefined },
+      { id: uid('work'), kind: 'work', weight: undefined, reps: undefined, rir: undefined },
+    ],
+  };
+  s.exercises.push(newEx);
+  return newEx;
 }
 
-/** Exercícios: arquivar (“deletar” sem apagar histórico) */
 export function archiveExercise(routineId: string, exerciseId: string) {
   const s = ensureSession(routineId);
-  const ex = s.exercises.find((e) => e.id === exerciseId);
-  if (!ex) return;
+  const idx = s.exercises.findIndex((e) => e.id === exerciseId);
+  if (idx < 0) return;
 
-  s.exercises = s.exercises.filter((e) => e.id !== exerciseId);
-  s.archivedExercises.unshift(ex); // guarda completo (sets etc.)
+  const [removed] = s.exercises.splice(idx, 1);
+  if (!store.archivedExercisesByRoutineId[routineId]) {
+    store.archivedExercisesByRoutineId[routineId] = [];
+  }
+  store.archivedExercisesByRoutineId[routineId].unshift(removed);
 }
 
-/** Lista de arquivados para re-adicionar */
-export function listArchivedExercises(routineId: string) {
+export function listArchivedExercises(routineId: string): ExerciseEntry[] {
+  return store.archivedExercisesByRoutineId[routineId] ?? [];
+}
+
+export function restoreArchivedExercise(routineId: string, exerciseId: string): ExerciseEntry | null {
+  const arr = store.archivedExercisesByRoutineId[routineId] ?? [];
+  const idx = arr.findIndex((e) => e.id === exerciseId);
+  if (idx < 0) return null;
+
+  const [restored] = arr.splice(idx, 1);
+  ensureSession(routineId).exercises.push(restored);
+  return restored;
+}
+
+export function toggleHipMobility(routineId: string) {
   const s = ensureSession(routineId);
-  return s.archivedExercises;
+  s.meta.hipMobilityDone = !s.meta.hipMobilityDone;
 }
 
-/** Re-adicionar um exercício arquivado (volta para pendente) */
-export function restoreArchivedExercise(routineId: string, archivedExerciseId: string) {
+export function addAbs(routineId: string, name: string) {
   const s = ensureSession(routineId);
-  const ex = s.archivedExercises.find((e) => e.id === archivedExerciseId);
-  if (!ex) return undefined;
-
-  s.archivedExercises = s.archivedExercises.filter((e) => e.id !== archivedExerciseId);
-
-  // volta como pendente (pra não “sumir”)
-  ex.status = 'pending';
-  s.exercises.push(ex);
-
-  return ex;
+  s.abs.push({ id: uid('abs'), name, done: false });
 }
 
-/** “Salvar” exercício => marca como concluído */
-export function markExerciseSaved(routineId: string, exerciseId: string) {
+export function toggleAbsDone(routineId: string, absId: string) {
   const s = ensureSession(routineId);
-  const ex = s.exercises.find((e) => e.id === exerciseId);
-  if (!ex) return;
-  ex.status = 'done';
+  const a = s.abs.find((x) => x.id === absId);
+  if (!a) return;
+  a.done = !a.done;
 }
 
-/** Abdominais (simples por enquanto) */
-export function createAbdominal(routineId: string, payload: { name: string; mode: AbMode }) {
-  const s = ensureSession(routineId);
-  s.abs.push({
-    id: uid('ab'),
-    name: payload.name,
-    mode: payload.mode,
-  });
-}
-
-export function removeAbdominal(routineId: string, abId: string) {
-  const s = ensureSession(routineId);
-  s.abs = s.abs.filter((a) => a.id !== abId);
-}
-
-/** Finalizar sessão */
 export function finalizeSession(routineId: string) {
   const s = ensureSession(routineId);
-  const now = new Date();
-  s.meta.endedAt = now.toISOString();
-
+  const end = new Date();
+  s.meta.endedAt = end.toISOString();
   if (s.meta.startedAt) {
-    const start = new Date(s.meta.startedAt).getTime();
-    const end = now.getTime();
-    const sec = Math.max(0, Math.floor((end - start) / 1000));
-    s.meta.durationSec = sec;
+    const start = new Date(s.meta.startedAt);
+    const dur = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
+    s.meta.durationSec = dur;
   }
 }

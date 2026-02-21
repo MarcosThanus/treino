@@ -1,5 +1,5 @@
 // src/screens/SessionScreen.tsx
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,9 @@ import {
   restoreArchivedExercise,
   finalizeSession,
   scheduleSave,
+  toggleHipMobility,
+  addAbs,
+  toggleAbsDone,
   type ExerciseEntry,
 } from '../state/store';
 
@@ -99,17 +102,13 @@ export function SessionScreen() {
 
   const [gymDraft, setGymDraft] = useState(session.meta.gym ?? '');
   const [showDone, setShowDone] = useState(false);
-
   const [showAddPanel, setShowAddPanel] = useState(false);
 
-  const archived = listArchivedExercises(routineId);
+  // ✅ SEM useMemo: sempre recalcula com dados atuais
+  const pending = session.exercises.filter((e) => e.status !== 'done');
+  const done = session.exercises.filter((e) => e.status === 'done');
 
-  const { pending, done } = useMemo(() => {
-    return {
-      pending: session.exercises.filter((e) => e.status !== 'done'),
-      done: session.exercises.filter((e) => e.status === 'done'),
-    };
-  }, [session.exercises]);
+  const archived = listArchivedExercises(routineId);
 
   function saveGym() {
     session.meta.gym = gymDraft.trim() || undefined;
@@ -117,12 +116,11 @@ export function SessionScreen() {
     force((x) => x + 1);
   }
 
-  function onAddExerciseNow() {
-    // IMPORTANTE: adiciona SEM depender de renomear
+  function addNewExercise() {
     addExercise(routineId);
     scheduleSave();
-    setShowAddPanel(false);
     force((x) => x + 1);
+    setShowAddPanel(false);
   }
 
   function askRemoveExercise(exId: string, name: string) {
@@ -148,8 +146,8 @@ export function SessionScreen() {
     const ex = restoreArchivedExercise(routineId, exId);
     if (!ex) return;
     scheduleSave();
-    setShowAddPanel(false);
     force((x) => x + 1);
+    setShowAddPanel(false);
   }
 
   function onFinalize() {
@@ -161,6 +159,29 @@ export function SessionScreen() {
       `Rotina: ${routineName}\nDuração: ${formatDuration(dur) || '—'}\nAcademia: ${session.meta.gym ?? '—'}`
     );
     navigation.goBack();
+  }
+
+  function onAddAbs() {
+    Alert.prompt?.(
+      'Adicionar abdominal',
+      'Digite o nome do abdominal',
+      (text) => {
+        const name = (text ?? '').trim();
+        if (!name) return;
+        addAbs(routineId, name);
+        scheduleSave();
+        force((x) => x + 1);
+      }
+    );
+
+    // Android nem sempre tem Alert.prompt; então fallback:
+    if (!(Alert as any).prompt) {
+      // fallback simples: cria um “Abdominal novo”
+      const name = `Abdominal ${session.abs.length + 1}`;
+      addAbs(routineId, name);
+      scheduleSave();
+      force((x) => x + 1);
+    }
   }
 
   return (
@@ -187,6 +208,49 @@ export function SessionScreen() {
         </Text>
       </View>
 
+      {/* Mobilidade + Abdominais */}
+      <View style={styles.section}>
+        <Text style={styles.label}>Extras</Text>
+
+        <Pressable
+          style={[styles.checkRow, session.meta.hipMobilityDone && styles.checkRowOn]}
+          onPress={() => {
+            toggleHipMobility(routineId);
+            scheduleSave();
+            force((x) => x + 1);
+          }}
+        >
+          <Text style={styles.checkBox}>{session.meta.hipMobilityDone ? '☑' : '☐'}</Text>
+          <Text style={styles.checkText}>Movimentação de quadril</Text>
+        </Pressable>
+
+        <View style={styles.absBox}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.absTitle}>Abdominais</Text>
+            <Pressable style={styles.secondaryBtnMini} onPress={onAddAbs}>
+              <Text style={styles.secondaryTxt}>+ Abdominal</Text>
+            </Pressable>
+          </View>
+
+          <View style={{ gap: 8 }}>
+            {session.abs.map((a) => (
+              <Pressable
+                key={a.id}
+                style={[styles.absItem, a.done && styles.absItemDone]}
+                onPress={() => {
+                  toggleAbsDone(routineId, a.id);
+                  scheduleSave();
+                  force((x) => x + 1);
+                }}
+              >
+                <Text style={styles.absMark}>{a.done ? '✔' : '○'}</Text>
+                <Text style={styles.absName}>{a.name}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </View>
+
       {/* Exercícios */}
       <View style={styles.section}>
         <View style={styles.rowBetween}>
@@ -197,7 +261,7 @@ export function SessionScreen() {
                 <Text style={styles.doneTxt}>Concluídos ({done.length}) {showDone ? '▲' : '▼'}</Text>
               </Pressable>
             )}
-            <Pressable style={styles.secondaryBtnMini} onPress={() => setShowAddPanel((v) => !v)}>
+            <Pressable style={styles.secondaryBtnMini} onPress={() => setShowAddPanel(true)}>
               <Text style={styles.secondaryTxt}>+ Exercício</Text>
             </Pressable>
           </View>
@@ -205,7 +269,14 @@ export function SessionScreen() {
 
         {showAddPanel && (
           <View style={styles.addPanel}>
-            <Pressable style={styles.primaryBtnSmall} onPress={onAddExerciseNow}>
+            <View style={styles.addHeader}>
+              <Text style={styles.addTitle}>Adicionar exercício</Text>
+              <Pressable style={styles.xBtn} onPress={() => setShowAddPanel(false)}>
+                <Text style={styles.xTxt}>✕</Text>
+              </Pressable>
+            </View>
+
+            <Pressable style={styles.primaryBtnSmall} onPress={addNewExercise}>
               <Text style={styles.primaryTxt}>Novo exercício</Text>
             </Pressable>
 
@@ -227,7 +298,7 @@ export function SessionScreen() {
           </View>
         )}
 
-        {/* PENDENTES (principal) */}
+        {/* Pendentes */}
         <View style={{ gap: 12 }}>
           {pending.length === 0 ? (
             <Text style={styles.meta}>
@@ -240,7 +311,12 @@ export function SessionScreen() {
                 <View key={ex.id} style={[styles.card, { borderColor: st.borderColor, backgroundColor: st.backgroundColor }]}>
                   <Pressable
                     style={{ flex: 1 }}
-                    onPress={() => navigation.navigate('Exercise', { routineId, exerciseId: ex.id })}
+                    onPress={() =>
+                      navigation.navigate('Exercise', {
+                        routineId,
+                        exerciseId: ex.id,
+                      })
+                    }
                   >
                     <View style={styles.cardTop}>
                       <Text style={styles.cardTitle}>{ex.name}</Text>
@@ -261,14 +337,19 @@ export function SessionScreen() {
           )}
         </View>
 
-        {/* CONCLUÍDOS (para editar) */}
+        {/* Concluídos */}
         {showDone && done.length > 0 && (
           <View style={styles.donePanel}>
             {done.map((ex) => (
               <Pressable
                 key={ex.id}
                 style={styles.doneCard}
-                onPress={() => navigation.navigate('Exercise', { routineId, exerciseId: ex.id })}
+                onPress={() =>
+                  navigation.navigate('Exercise', {
+                    routineId,
+                    exerciseId: ex.id,
+                  })
+                }
               >
                 <Text style={styles.doneCardTitle}>{ex.name}</Text>
                 <Text style={styles.doneCardSub}>SALVO • toque para editar</Text>
@@ -337,6 +418,51 @@ const styles = StyleSheet.create({
   },
   secondaryTxt: { color: '#111', fontWeight: '900' },
 
+  checkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e6e6e6',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  checkRowOn: {
+    backgroundColor: '#eefaf1',
+    borderColor: '#bfe8c9',
+  },
+  checkBox: { fontSize: 18, fontWeight: '900' },
+  checkText: { fontSize: 14, fontWeight: '900', color: '#111' },
+
+  absBox: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e6e6e6',
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+  },
+  absTitle: { fontWeight: '900', color: '#111' },
+  absItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#eee',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#fafafa',
+  },
+  absItemDone: {
+    backgroundColor: '#eefaf1',
+    borderColor: '#bfe8c9',
+  },
+  absMark: { fontWeight: '900', color: '#111' },
+  absName: { fontWeight: '900', color: '#111' },
+
   card: { borderRadius: 14, borderWidth: 1, padding: 14, gap: 10 },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   cardTitle: { fontWeight: '900', fontSize: 16, color: '#111', flex: 1 },
@@ -392,6 +518,20 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 12,
   },
+  addHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  addTitle: { fontWeight: '900', color: '#111' },
+  xBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  xTxt: { fontWeight: '900', color: '#111' },
+
   archItem: {
     backgroundColor: '#fafafa',
     borderWidth: 1,
