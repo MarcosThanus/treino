@@ -6,7 +6,9 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "scheme": "treino",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "android": {
       "package": "com.marcosthanus.treino",
       "versionCode": 1,
@@ -17,6 +19,11 @@
     "ios": {
       "supportsTablet": true
     },
-    "plugins": []
+    "plugins": [],
+    "extra": {
+      "eas": {
+        "projectId": "c6f21dff-6d49-49a6-a38b-65f64daabaa9"
+      }
+    }
   }
 }
