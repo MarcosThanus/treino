@@ -1,6 +1,5 @@
 // src/screens/HomeScreen.tsx
-
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import {
   SafeAreaView,
   View,
@@ -16,11 +15,10 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import {
   addRoutine,
-  archiveRoutine,
   listActiveRoutines,
   listArchivedRoutines,
+  archiveRoutine,
   unarchiveRoutine,
-  resetRoutineTemplate,
   scheduleSave,
 } from '../state/store';
 
@@ -29,8 +27,8 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 export function HomeScreen({ navigation }: Props) {
   const [, force] = useState(0);
 
-  const active = useMemo(() => listActiveRoutines(), [/* store in-memory */]);
-  const archived = useMemo(() => listArchivedRoutines(), [/* store in-memory */]);
+  const active = listActiveRoutines();
+  const archived = listArchivedRoutines();
 
   const [creating, setCreating] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -45,12 +43,13 @@ export function HomeScreen({ navigation }: Props) {
   }
 
   function confirmCreate() {
-    const r = addRoutine(nameDraft);
+    const name = nameDraft.trim();
+    const r = addRoutine(name);
     scheduleSave();
     setCreating(false);
     setNameDraft('');
     force((x) => x + 1);
-    navigation.navigate('Session', { routineId: r.id });
+    openRoutine(r.id);
   }
 
   function cancelCreate() {
@@ -58,135 +57,112 @@ export function HomeScreen({ navigation }: Props) {
     setNameDraft('');
   }
 
-  function askArchive(routineId: string, routineName: string) {
-    Alert.alert(
-      'Arquivar rotina',
-      `Arquivar "${routineName}"? (Nada será apagado)`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Arquivar',
-          style: 'destructive',
-          onPress: () => {
-            archiveRoutine(routineId);
-            scheduleSave();
-            force((x) => x + 1);
-          },
-        },
-      ]
-    );
-  }
+  function chooseRoutineToDelete() {
+    if (active.length === 0) {
+      Alert.alert('Nada para apagar', 'Não há rotinas ativas.');
+      return;
+    }
 
-  function askResetTemplate(routineId: string, routineName: string) {
     Alert.alert(
-      'Criar rotina do zero',
-      `Zerar a base de "${routineName}"? (Histórico não será apagado)`,
+      'Apagar rotina',
+      'Escolha qual rotina quer apagar (arquivar).',
       [
         { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Zerar',
-          style: 'destructive',
+        ...active.slice(0, 6).map((r) => ({
+          text: r.name,
+          style: 'destructive' as const,
           onPress: () => {
-            resetRoutineTemplate(routineId);
-            scheduleSave();
-            force((x) => x + 1);
-            navigation.navigate('Session', { routineId });
+            Alert.alert(
+              'Confirmar',
+              `Apagar "${r.name}"?\n\nNada será apagado do histórico. A rotina só será arquivada.`,
+              [
+                { text: 'Cancelar', style: 'cancel' },
+                {
+                  text: 'Apagar',
+                  style: 'destructive',
+                  onPress: () => {
+                    archiveRoutine(r.id);
+                    scheduleSave();
+                    force((x) => x + 1);
+                  },
+                },
+              ]
+            );
           },
-        },
-      ]
-    );
-  }
-
-  function askUnarchive(routineId: string, routineName: string) {
-    Alert.alert(
-      'Reativar rotina',
-      `Reativar "${routineName}"?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Reativar',
-          onPress: () => {
-            unarchiveRoutine(routineId);
-            scheduleSave();
-            force((x) => x + 1);
-          },
-        },
+        })),
+        ...(active.length > 6
+          ? [
+              {
+                text: 'Tenho mais rotinas…',
+                onPress: () => {
+                  // fallback simples: mostra outra lista (pode melhorar depois)
+                  Alert.alert(
+                    'Apagar rotina',
+                    'Role e escolha pelo toque na rotina na lista (modo avançado no próximo passo).'
+                  );
+                },
+              },
+            ]
+          : []),
       ]
     );
   }
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
+      <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Treino</Text>
-        <Text style={styles.subtitle}>Escolha ou crie uma rotina</Text>
 
-        {/* Criar rotina */}
-        {!creating ? (
-          <Pressable style={styles.primaryBtn} onPress={startCreate}>
-            <Text style={styles.primaryTxt}>+ Criar nova rotina</Text>
-          </Pressable>
-        ) : (
-          <View style={styles.createBox}>
-            <Text style={styles.label}>Nome da rotina</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Ex: Braço, Peito e Tríceps..."
-              value={nameDraft}
-              onChangeText={setNameDraft}
-              autoFocus
-            />
-            <View style={styles.row}>
-              <Pressable style={styles.secondaryBtn} onPress={cancelCreate}>
-                <Text style={styles.secondaryTxt}>Cancelar</Text>
-              </Pressable>
-              <Pressable style={styles.primaryBtnSmall} onPress={confirmCreate}>
-                <Text style={styles.primaryTxt}>Criar</Text>
-              </Pressable>
+        <View style={styles.topRow}>
+          {!creating ? (
+            <Pressable style={styles.primaryBtn} onPress={startCreate}>
+              <Text style={styles.primaryTxt}>+ Criar nova rotina</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.createBox}>
+              <Text style={styles.label}>Nome da rotina</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Ex: Braço"
+                value={nameDraft}
+                onChangeText={setNameDraft}
+                autoFocus
+              />
+              <View style={styles.row}>
+                <Pressable style={styles.secondaryBtn} onPress={cancelCreate}>
+                  <Text style={styles.secondaryTxt}>Cancelar</Text>
+                </Pressable>
+                <Pressable style={styles.primaryBtnSmall} onPress={confirmCreate}>
+                  <Text style={styles.primaryTxt}>Criar</Text>
+                </Pressable>
+              </View>
             </View>
-            <Text style={styles.meta}>
-              Dica: depois você pode arquivar/reativar rotinas quando quiser.
-            </Text>
-          </View>
-        )}
+          )}
 
-        <View style={{ height: 16 }} />
+          <Pressable style={styles.dangerBtn} onPress={chooseRoutineToDelete}>
+            <Text style={styles.dangerTxt}>Apagar rotina</Text>
+          </Pressable>
+        </View>
 
-        {/* Rotinas ativas */}
+        <View style={{ height: 12 }} />
+
         <Text style={styles.sectionTitle}>Rotinas</Text>
         <View style={{ gap: 12 }}>
           {active.length === 0 ? (
-            <Text style={styles.meta}>Nenhuma rotina ativa. Crie uma acima.</Text>
+            <Text style={styles.meta}>Nenhuma rotina ativa.</Text>
           ) : (
             active.map((r) => (
-              <View key={r.id} style={styles.card}>
-                <Pressable onPress={() => openRoutine(r.id)} style={{ flex: 1 }}>
-                  <Text style={styles.cardTitle}>{r.name}</Text>
-                  <Text style={styles.cardHint}>Abrir sessão</Text>
-                </Pressable>
-
-                <View style={styles.cardActions}>
-                  <Pressable
-                    style={styles.smallBtn}
-                    onPress={() => askResetTemplate(r.id, r.name)}
-                  >
-                    <Text style={styles.smallBtnTxt}>Zerar</Text>
-                  </Pressable>
-                  <Pressable
-                    style={styles.smallBtnDanger}
-                    onPress={() => askArchive(r.id, r.name)}
-                  >
-                    <Text style={styles.smallBtnTxtDanger}>Arquivar</Text>
-                  </Pressable>
-                </View>
-              </View>
+              <Pressable key={r.id} style={styles.card} onPress={() => openRoutine(r.id)}>
+                <Text style={styles.cardTitle}>{r.name}</Text>
+                <Text style={styles.cardHint}>Toque para abrir</Text>
+              </Pressable>
             ))
           )}
         </View>
 
-        {/* Arquivadas (opcional) */}
         <View style={{ height: 18 }} />
         <Text style={styles.sectionTitle}>Arquivadas</Text>
+
         <View style={{ gap: 10 }}>
           {archived.length === 0 ? (
             <Text style={styles.meta}>Nenhuma rotina arquivada.</Text>
@@ -195,7 +171,19 @@ export function HomeScreen({ navigation }: Props) {
               <Pressable
                 key={r.id}
                 style={styles.archivedCard}
-                onPress={() => askUnarchive(r.id, r.name)}
+                onPress={() => {
+                  Alert.alert('Reativar', `Reativar "${r.name}"?`, [
+                    { text: 'Cancelar', style: 'cancel' },
+                    {
+                      text: 'Reativar',
+                      onPress: () => {
+                        unarchiveRoutine(r.id);
+                        scheduleSave();
+                        force((x) => x + 1);
+                      },
+                    },
+                  ]);
+                }}
               >
                 <Text style={styles.archivedTitle}>{r.name}</Text>
                 <Text style={styles.archivedHint}>Toque para reativar</Text>
@@ -203,20 +191,17 @@ export function HomeScreen({ navigation }: Props) {
             ))
           )}
         </View>
-
-        <View style={{ height: 24 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#ffffff' },
-  scroll: { flex: 1, backgroundColor: '#ffffff' },
+  safe: { flex: 1, backgroundColor: '#fff' },
   container: { padding: 16, gap: 12 },
-
   title: { fontSize: 28, fontWeight: '900', color: '#111' },
-  subtitle: { fontSize: 14, color: '#444', marginTop: 4 },
+
+  topRow: { gap: 12 },
 
   sectionTitle: { fontSize: 14, fontWeight: '900', color: '#111' },
   label: { fontSize: 13, fontWeight: '900', color: '#111' },
@@ -259,6 +244,16 @@ const styles = StyleSheet.create({
   },
   secondaryTxt: { color: '#111', fontWeight: '900' },
 
+  dangerBtn: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#f0b3b3',
+    borderRadius: 16,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  dangerTxt: { fontWeight: '900', color: '#b00020' },
+
   createBox: {
     backgroundColor: '#fff',
     borderWidth: 2,
@@ -269,9 +264,6 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    flexDirection: 'row',
-    gap: 12,
-    alignItems: 'center',
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#e6e6e6',
@@ -280,28 +272,6 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 16, fontWeight: '900', color: '#111' },
   cardHint: { fontSize: 12, color: '#666', marginTop: 4 },
-
-  cardActions: { gap: 10, alignItems: 'flex-end' },
-
-  smallBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    backgroundColor: '#fff',
-  },
-  smallBtnTxt: { fontWeight: '900', color: '#111', fontSize: 12 },
-
-  smallBtnDanger: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#f0b3b3',
-    backgroundColor: '#fff',
-  },
-  smallBtnTxtDanger: { fontWeight: '900', color: '#b00020', fontSize: 12 },
 
   archivedCard: {
     backgroundColor: '#fafafa',
